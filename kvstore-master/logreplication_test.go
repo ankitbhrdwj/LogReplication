@@ -1,6 +1,6 @@
 package main
 
-import 	(
+import (
 	"os"
 	"os/exec"
 	"strconv"
@@ -17,21 +17,21 @@ func TestCluster(t *testing.T) {
 	Max = 10
 	port = 8080
 	portmap = make(map[int]string)
-	cmnd := exec.Command("go","build","kvstore.go")
-	cmnd.Run()	
+	cmnd := exec.Command("go", "build", "kvstore.go")
+	cmnd.Run()
 	for i := 0; i < Max; i++ {
-		cmd = append(cmd, exec.Command("./kvstore", strconv.Itoa(i+1),strconv.Itoa(port+i)))
+		cmd = append(cmd, exec.Command("./kvstore", strconv.Itoa(i+1), strconv.Itoa(port+i)))
 	}
 	for i := 0; i < Max; i++ {
 		go run(i)
 	}
 
-	for k:=1;k<=10;k++ {
+	for k := 1; k <= 10; k++ {
 		port = port + 1
 		Port := strconv.Itoa(port)
 		portmap[k] = Port
 	}
-		time.Sleep(50*time.Second)
+	time.Sleep(50 * time.Second)
 }
 
 func run(i int) {
@@ -46,8 +46,7 @@ func kill() {
 	}
 }
 
-func LogEntryGenerator(){
-
+func LogEntryGenerator() {
 
 }
 

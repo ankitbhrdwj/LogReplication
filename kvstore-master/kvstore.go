@@ -1,17 +1,17 @@
 package main
 
 import (
-	"github.com/jmhodges/levigo"
 	Raft "Raft"
 	"fmt"
+	"github.com/jmhodges/levigo"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"log"
 )
 
 var mutex sync.Mutex
@@ -22,6 +22,7 @@ var id = 0
 var ro *levigo.ReadOptions
 var wo *levigo.WriteOptions
 var db *levigo.DB
+
 //var itr *levigo.Iterator
 
 func main() {
@@ -82,7 +83,7 @@ func insert(res http.ResponseWriter, req *http.Request) {
 		}
 		if Key != "" && Value != "" {
 			if raftnode.Leader() != raftnode.NodePid {
-				fmt.Fprintf(res, "This node is not the Leader Node,go to Node No %d",raftnode.Leader())
+				fmt.Fprintf(res, "This node is not the Leader Node,go to Node No %d", raftnode.Leader())
 				return
 			}
 			mutex.Lock()
@@ -93,15 +94,15 @@ func insert(res http.ResponseWriter, req *http.Request) {
 			if Data[0] == "Insert" {
 				key := strings.Split(Data[1], "=")
 				value := strings.Split(Data[2], "=")
-				if Key == key[1] && Value == value[1] {			
+				if Key == key[1] && Value == value[1] {
 					hash[Key] = Value
-					err := db.Put(wo, []byte(Key),[]byte(Value))
-					if err != nil{
+					err := db.Put(wo, []byte(Key), []byte(Value))
+					if err != nil {
 						log.Println(err)
 					}
 					fmt.Fprintf(res, "KEY = %s \t VALUE = %s", Key, Value)
 				}
-			}	
+			}
 			mutex.Unlock()
 		} else {
 			fmt.Fprintf(res, "Give argumets properly in the form  KEY=VALUE")
@@ -129,14 +130,14 @@ func deletekv(res http.ResponseWriter, req *http.Request) {
 		mutex.Lock()
 		if Key[0] != "" && hash[Key[0]] != "" {
 			if raftnode.Leader() != raftnode.NodePid {
-				fmt.Fprintf(res, "This node is not the Leader Node,go to Node No. %d",raftnode.Leader())
+				fmt.Fprintf(res, "This node is not the Leader Node,go to Node No. %d", raftnode.Leader())
 				return
 			}
 			//before deleting from the hash ,append the delete entry in the log
-			operation:=deletelog(Key[0])
+			operation := deletelog(Key[0])
 			operation = operation + " "
 			Data := strings.Split(operation, " ")
-			if Data[0] == "Delete"{
+			if Data[0] == "Delete" {
 				key := strings.Split(Data[1], "=")
 				if Key[0] == key[1] {
 					fmt.Fprintf(res, "Pair deleted is KEY=%s \t VALUE=%s", Key[0], hash[Key[0]])
@@ -145,7 +146,7 @@ func deletekv(res http.ResponseWriter, req *http.Request) {
 					if err != nil {
 						log.Println(err)
 					}
-				}			
+				}
 			}
 		} else {
 			fmt.Fprintf(res, "Given KEY=VALUE pair is not available in KVSTORE")
@@ -175,11 +176,11 @@ func check(res http.ResponseWriter, req *http.Request) {
 		fmt.Fprintf(res, "KEY=%s \t VALUE=%s", key[0], hash[key[0]])
 	} else {
 		data, err := db.Get(ro, []byte(key[0]))
-		if err!= nil {
+		if err != nil {
 			fmt.Fprintf(res, "Given KEY=VALUE pair is not available in KVSTORE")
 			log.Println(err)
-		} 
-		fmt.Fprintf(res, "KEY=%s \t VALUE=%s", key[0],string(data))
+		}
+		fmt.Fprintf(res, "KEY=%s \t VALUE=%s", key[0], string(data))
 	}
 	mutex.Unlock()
 }
@@ -194,7 +195,7 @@ func store(res http.ResponseWriter, req *http.Request) {
 		}
 	}
 	mutex.Unlock()
-	
+
 }
 
 func initDB(id string) {
@@ -203,70 +204,69 @@ func initDB(id string) {
 	opts.SetCache(levigo.NewLRUCache(3 << 10))
 	opts.SetCreateIfMissing(true)
 	db, err = levigo.Open("level-DB"+id, opts)
-	if err != nil{
-		fmt.Print(err)	
+	if err != nil {
+		fmt.Print(err)
 	}
 	ro = levigo.NewReadOptions()
 	wo = levigo.NewWriteOptions()
-//	itr = db.NewIterator(ro)
+	//	itr = db.NewIterator(ro)
 	defer ro.Close()
 	defer wo.Close()
-//	defer itr.Close()
+	//	defer itr.Close()
 }
 
 ///////////////////////////////////////*Log Replication*/////////////////////////////////////
 var raftnode *Raft.RaftNode
 
 func Raftlayer(Id int) {
-	raftnode=Raft.New(Id,"config.txt")
+	raftnode = Raft.New(Id, "config.txt")
 	go Listen(Id)
 }
 
 func Listen(Id int) {
 	for {
-		if (raftnode.Leader()!=0) && (raftnode.Leader() != Id) {
+		if (raftnode.Leader() != 0) && (raftnode.Leader() != Id) {
 			operation := GetMsg()
 			operation = operation + " "
 			Data := strings.Split(operation, " ")
 			mutex.Lock()
-			if Data[0] == "Delete"{
+			if Data[0] == "Delete" {
 				key := strings.Split(Data[1], "=")
 				delete(hash, key[1])
 				err := db.Delete(wo, []byte(key[1]))
 				if err != nil {
-					log.Println(err)				
+					log.Println(err)
 				}
 			}
 			if Data[0] == "Insert" {
 				key := strings.Split(Data[1], "=")
 				value := strings.Split(Data[2], "=")
 				hash[key[1]] = value[1]
-				err := db.Put(wo, []byte(key[1]),[]byte(value[1]))
+				err := db.Put(wo, []byte(key[1]), []byte(value[1]))
 				if err != nil {
 					log.Println(err)
-				}		
-			} 
+				}
+			}
 			mutex.Unlock()
-		} 
-		if (raftnode.Leader() != 0) && (raftnode.Leader() == Id) {
-			time.Sleep(2*time.Second)
 		}
-		if (raftnode.Leader() == 0) {
-			time.Sleep(5*time.Second)
+		if (raftnode.Leader() != 0) && (raftnode.Leader() == Id) {
+			time.Sleep(2 * time.Second)
+		}
+		if raftnode.Leader() == 0 {
+			time.Sleep(5 * time.Second)
 		}
 	}
 }
 
-
-func GetMsg() string{
+func GetMsg() string {
 	var Msg interface{}
 	var y Raft.LogItem
 	for {
 		for msg := range raftnode.Inbox() {
 			if msg != nil {
 				Msg = *msg
-				y =Msg.(Raft.LogItem)
-				break	
+				y = Msg.(Raft.LogItem)
+				break
 			}
 		}
 		break
@@ -274,15 +274,14 @@ func GetMsg() string{
 	return y.Data.(string)
 }
 
-func insertlog(Key string, Value string) string{
-	Msg := "Insert " + "Key="+ Key +" Value=" + Value
+func insertlog(Key string, Value string) string {
+	Msg := "Insert " + "Key=" + Key + " Value=" + Value
 	raftnode.Outbox() <- Msg
 	return GetMsg()
 }
 
-func deletelog(Key string) string{
-	Msg := "Delete Key="+ Key
+func deletelog(Key string) string {
+	Msg := "Delete Key=" + Key
 	raftnode.Outbox() <- Msg
 	return GetMsg()
 }
-

@@ -1,5 +1,7 @@
 package cluster
+
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/gob"
 	"fmt"
@@ -8,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"sync"
-	"bytes"
 )
 
 //constants and variables
@@ -82,7 +83,7 @@ func New(myPid int, ConFile string) *RaftServer {
 
 func getMsg(server *RaftServer) {
 	for {
-		var msg Envelope			// This statement,outside the loop was creating lots of trouble to me. 
+		var msg Envelope // This statement,outside the loop was creating lots of trouble to me.
 		b, _ := server.socket.RecvBytes(0)
 		newBuf := new(bytes.Buffer)
 		dec := gob.NewDecoder(newBuf)
@@ -114,15 +115,15 @@ func sendMsg(server *RaftServer) {
 				}
 				buf := new(bytes.Buffer)
 				enc := gob.NewEncoder(buf)
-				err:=enc.Encode(msg)
+				err := enc.Encode(msg)
 				if err != nil {
 					fmt.Println(err)
 				}
 				server.mu.Lock()
-				if PID <10 {
-				b := buf.Bytes()
-				server.client[PID-1].SendBytes(b, 0)	//??????? Some problem is there.May be I need to modifiy this
-				}				
+				if PID < 10 {
+					b := buf.Bytes()
+					server.client[PID-1].SendBytes(b, 0) //??????? Some problem is there.May be I need to modifiy this
+				}
 				server.mu.Unlock()
 			}
 		} else {
@@ -138,7 +139,7 @@ func sendMsg(server *RaftServer) {
 					}
 					buf := new(bytes.Buffer)
 					enc := gob.NewEncoder(buf)
-					err:=enc.Encode(msg)
+					err := enc.Encode(msg)
 					if err != nil {
 						fmt.Println(err)
 					}
@@ -163,7 +164,7 @@ func connect(server *RaftServer) {
 		if err != nil {
 			panic(err)
 		}
-	//	print("value of i :",i,"Value of address :",hash[server.peers[i]])
+		//	print("value of i :",i,"Value of address :",hash[server.peers[i]])
 		server.client[i].Connect("tcp://" + hash[server.peers[i]])
 		server.mu.Unlock()
 	}

@@ -3,11 +3,11 @@ package Raft
 //package main
 
 import (
-	"cluster"
-	"fmt"
 	"bufio"
+	"cluster"
 	"encoding/gob"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -18,20 +18,20 @@ import (
 )
 
 type RaftNode struct {
-	Isflr     bool //follower
-	Isldr     bool //leader
-	Iscnd     bool //candidate
-	NodePid   int  //PID of that node
-	CurTerm   int  //Term of that particular node
-	VotedTerm int  //voted at what term
-	MaxTime   int  //election timeout to avoid split voting
-	ElecTO    int  //convert from follower to candidate if no msg arrived from leader
-	LdrId     int  //PID of leader
-	TotNodes  int  //total number of nodes for majority in election
-	Votes     int  //total votes recieved
-	TO_FLAG   int  //whether election should happen
-	inbox     chan *LogItem
-	outbox    chan interface{}
+	Isflr      bool //follower
+	Isldr      bool //leader
+	Iscnd      bool //candidate
+	NodePid    int  //PID of that node
+	CurTerm    int  //Term of that particular node
+	VotedTerm  int  //voted at what term
+	MaxTime    int  //election timeout to avoid split voting
+	ElecTO     int  //convert from follower to candidate if no msg arrived from leader
+	LdrId      int  //PID of leader
+	TotNodes   int  //total number of nodes for majority in election
+	Votes      int  //total votes recieved
+	TO_FLAG    int  //whether election should happen
+	inbox      chan *LogItem
+	outbox     chan interface{}
 	raftserver *cluster.RaftServer
 }
 
@@ -286,8 +286,8 @@ func VoteReply(msg string, raftnode *RaftNode) {
 
 func SendHBeat(term int, leaderid int, raftnode *RaftNode) {
 	if raftnode.Isldr == true {
-				go SendLog(raftnode)
-				}
+		go SendLog(raftnode)
+	}
 	for {
 		if raftnode.Isldr == true {
 			if raftnode.NodePid == leaderid {
@@ -325,9 +325,9 @@ type LogItem struct {
 */
 
 type LogItem struct {
-	Index int64	`json:"index"`
-	Term  int	`json:"term"`	 
-	Data  interface{}`json:"data"` 		// The data that was supplied to raft's inbox
+	Index int64       `json:"index"`
+	Term  int         `json:"term"`
+	Data  interface{} `json:"data"` // The data that was supplied to raft's inbox
 }
 
 type LogReply struct {
@@ -345,26 +345,26 @@ type Ack struct {
 var logentry LogEntry
 var item LogItem
 var Log []LogItem
-var BlockNext [10]bool	//by default initialized to false and false means don't block
+var BlockNext [10]bool //by default initialized to false and false means don't block
 var CurrentIndex int64
 var logIndex int64
-var ACK map[int64]Ack	//for which index Ack has come ???
-var Majority = 6	// Depends on # of nodes in the cluster Majority=(Max/2+1)
-var logFile string	//logfilename 
-var file *os.File	//log file descriptor
+var ACK map[int64]Ack //for which index Ack has come ???
+var Majority = 6      // Depends on # of nodes in the cluster Majority=(Max/2+1)
+var logFile string    //logfilename
+var file *os.File     //log file descriptor
 
 func LogReplicator(raftnode *RaftNode) {
 	var err error
 	ACK = make(map[int64]Ack)
 	id := strconv.Itoa(raftnode.NodePid)
-	logFile = "LogFile"+id+".json"
+	logFile = "LogFile" + id + ".json"
 
 	if _, err := os.Stat(logFile); err != nil {
-    		if os.IsNotExist(err) {
-        		os.Create(logFile)		//????
-   	 	} else {
-        		fmt.Print(err)
-    		}
+		if os.IsNotExist(err) {
+			os.Create(logFile) //????
+		} else {
+			fmt.Print(err)
+		}
 	}
 
 	File, err := os.Open(logFile)
@@ -386,11 +386,11 @@ func LogReplicator(raftnode *RaftNode) {
 		//fmt.Println(logCount,log)
 		logentry.CommitIndex = log.Index
 		CurrentIndex = log.Index
-		if len(Log) == 0 { 
-				Log = append(Log,log) //only last log entry will be sufficient to check previousindex and previousterm
-				logIndex += 1
-				//fmt.Println(Log)			
-				}
+		if len(Log) == 0 {
+			Log = append(Log, log) //only last log entry will be sufficient to check previousindex and previousterm
+			logIndex += 1
+			//fmt.Println(Log)
+		}
 	}
 	File.Close()
 
@@ -408,7 +408,7 @@ func GetAck(item LogItem, raftnode *RaftNode) { //Msg to KVSTORE & somthing will
 	if err != nil {
 		log.Println(err)
 	}
-	_,err = file.WriteString(string(jsonBytes) + "\n")	
+	_, err = file.WriteString(string(jsonBytes) + "\n")
 	if err != nil {
 		log.Println(err)
 	}
@@ -428,7 +428,7 @@ func SendLog(raftnode *RaftNode) { //Msg from KVSTORE & this function will repli
 				for i := 0; i < 10; i++ {
 					go send(raftnode, i, logObject)
 				}
-			} 	
+			}
 		}
 	}
 }
@@ -450,7 +450,7 @@ func PrepareLogEntry(msg interface{}, raftnode *RaftNode) LogEntry {
 		logentry.PrevLogindex = Log[logIndex-1].Index
 		logentry.PrevLogTerm = Log[logIndex-1].Term
 	}
-	item.Index = CurrentIndex+1
+	item.Index = CurrentIndex + 1
 	item.Term = logentry.Term
 	item.Data = msg
 	logentry.LogCommand = item
@@ -471,45 +471,45 @@ func logEntryHandler(envelope *cluster.Envelope, raftnode *RaftNode) {
 		//log.Println("Received :",logety)
 		log.Println(Log)
 		if (CurrentIndex == 0) && (logety.PrevLogindex == 0) {
-			SendAck(x,raftnode, true)		
+			SendAck(x, raftnode, true)
 			Log = append(Log, logety.LogCommand)
 			CurrentIndex += 1
 			logIndex += 1
 		}
 
 		//log.Println("@logentr recvd",CurrentIndex,logety.CommitIndex,logety.PrevLogindex,Log[logIndex-1].Index,x)
-		if (CurrentIndex!=0) && (logety.PrevLogindex==Log[logIndex-1].Index)&&(logety.PrevLogTerm==Log[logIndex-1].Term) {
+		if (CurrentIndex != 0) && (logety.PrevLogindex == Log[logIndex-1].Index) && (logety.PrevLogTerm == Log[logIndex-1].Term) {
 			SendAck(x, raftnode, true)
-			raftnode.CurTerm = Log[logIndex-1].Term			
+			raftnode.CurTerm = Log[logIndex-1].Term
 			Log = append(Log, logety.LogCommand)
 			CurrentIndex += 1
-			logIndex += 1 
+			logIndex += 1
 			var item LogItem
-			y := Log[logIndex-2]   	
+			y := Log[logIndex-2]
 			item.Index = y.Index
 			item.Term = y.Term
 			item.Data = y.Data
 			//update Committed data of follower nodes
-			//if Log[logentry.CommitIndex-1]!=0 {return;}   //make sure that same entry isn't applied twice. 
-			GetAck(item, raftnode) 
+			//if Log[logentry.CommitIndex-1]!=0 {return;}   //make sure that same entry isn't applied twice.
+			GetAck(item, raftnode)
 		} else {
-			if (CurrentIndex != 0)&&(logety.PrevLogindex > Log[logIndex-1].Index)&&(x.Index <= logety.CommitIndex) && (logety.PrevLogindex <= logety.CommitIndex) {  //???????????
+			if (CurrentIndex != 0) && (logety.PrevLogindex > Log[logIndex-1].Index) && (x.Index <= logety.CommitIndex) && (logety.PrevLogindex <= logety.CommitIndex) { //???????????
 				Log = append(Log, logety.LogCommand)
 				CurrentIndex += 1
-				logIndex += 1 
+				logIndex += 1
 				//fmt.Print(Log[logIndex-1].Index,logety.CommitIndex)
 				var item LogItem
-				y := Log[logIndex-1]   //???? [logety.CommitIndex-1]	
+				y := Log[logIndex-1] //???? [logety.CommitIndex-1]
 				item.Index = y.Index
 				item.Term = y.Term
 				item.Data = y.Data
-				//update Committed data of follower nodes 
+				//update Committed data of follower nodes
 				GetAck(item, raftnode)
 				return
 			}
-			
+
 			if (CurrentIndex != 0) && (logety.PrevLogindex != 0) {
-				SendAck(x, raftnode, false)  	// -ve Ack
+				SendAck(x, raftnode, false) // -ve Ack
 			}
 		}
 	}
@@ -523,7 +523,7 @@ func logEntryHandler(envelope *cluster.Envelope, raftnode *RaftNode) {
 			response := ACK[logreply.Index]
 			response.positive = response.positive + 1
 			ACK[logreply.Index] = response
-			if response.positive == (Majority-1) {
+			if response.positive == (Majority - 1) {
 				//Majority has replicated the log Send Success to KVSTORE
 				var item LogItem
 				y := logreply.Data.(LogItem)
@@ -531,11 +531,11 @@ func logEntryHandler(envelope *cluster.Envelope, raftnode *RaftNode) {
 				item.Term = y.Term
 				item.Data = y.Data
 				GetAck(item, raftnode)
-			} 
+			}
 		}
 		if logreply.Reply == false {
 			response := ACK[logreply.Index]
-			sync(envelope.Pid,logreply.Isat,raftnode)
+			sync(envelope.Pid, logreply.Isat, raftnode)
 			response.negative = response.negative + 1
 			ACK[logreply.Index] = response
 			if response.negative == Majority {
@@ -546,7 +546,7 @@ func logEntryHandler(envelope *cluster.Envelope, raftnode *RaftNode) {
 	}
 }
 
-func sync(id int,index int64,raftnode *RaftNode) {
+func sync(id int, index int64, raftnode *RaftNode) {
 	//log.Println("Poor guy",id,"has entry upto",index)
 	File, err := os.Open(logFile)
 	if err != nil {
@@ -562,21 +562,23 @@ func sync(id int,index int64,raftnode *RaftNode) {
 		logCount++
 		json.Unmarshal([]byte(logItemBytes), &log)
 		if log.Index > index {
-			z := PrepareSync(preLog,log,raftnode,int64(logCount)) 
+			z := PrepareSync(preLog, log, raftnode, int64(logCount))
 			//fmt.Print(id,z)
 			raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: id, MsgId: 0, Msg: z}
-		} else {preLog = log;}			
-}
+		} else {
+			preLog = log
+		}
+	}
 	File.Close()
-	if logIndex >=1 {
-		z := PrepareSync(log,Log[logIndex-1],raftnode,logIndex) 
+	if logIndex >= 1 {
+		z := PrepareSync(log, Log[logIndex-1], raftnode, logIndex)
 		raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: id, MsgId: 0, Msg: z}
 	}
 }
 
-func PrepareSync(preLog LogItem,log LogItem,raftnode *RaftNode,committed int64) LogEntry {
+func PrepareSync(preLog LogItem, log LogItem, raftnode *RaftNode, committed int64) LogEntry {
 	logentry.CommitIndex = committed
-	logentry.Term = raftnode.CurTerm   
+	logentry.Term = raftnode.CurTerm
 	logentry.LeaderId = raftnode.LdrId
 	logentry.PrevLogindex = preLog.Index
 	logentry.PrevLogTerm = preLog.Term
@@ -585,6 +587,7 @@ func PrepareSync(preLog LogItem,log LogItem,raftnode *RaftNode,committed int64) 
 }
 
 var logack LogReply
+
 func SendAck(x LogItem, raftnode *RaftNode, reply bool) {
 	if logIndex != 0 {
 		logack.Isat = Log[logIndex-1].Index
@@ -592,7 +595,7 @@ func SendAck(x LogItem, raftnode *RaftNode, reply bool) {
 	logack.Index = x.Index
 	logack.Reply = reply
 	logack.Data = x
-//	log.Println("@ Send Ack :",raftnode.LdrId)
+	//	log.Println("@ Send Ack :",raftnode.LdrId)
 	if (raftnode.LdrId >= 1) && (raftnode.LdrId <= 10) {
 		raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: raftnode.LdrId, MsgId: 0, Msg: logack}
 	}
