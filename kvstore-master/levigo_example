@@ -1,0 +1,31 @@
+package main 
+
+import (
+	"github.com/jmhodges/levigo"
+	"fmt"
+	)
+
+func main(){
+	opts := levigo.NewOptions()
+	opts.SetCache(levigo.NewLRUCache(3 << 10))
+	opts.SetCreateIfMissing(true)
+	db, err := levigo.Open("abc", opts)
+	if err!=nil{
+		fmt.Print(err)	
+	}
+	ro := levigo.NewReadOptions()
+	wo := levigo.NewWriteOptions()
+
+	// if ro and wo are not used again, be sure to Close them.
+	data:= "value"
+	db.Put(wo, []byte("key"),[]byte(data))	
+	db.Put(wo, []byte("anotherkey"), []byte(data))
+	x, _ := db.Get(ro, []byte("key"))
+	fmt.Println(string(x))
+	db.Delete(wo, []byte("key"))
+	defer ro.Close()
+	defer wo.Close()
+}
+
+
+

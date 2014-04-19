@@ -1,0 +1,449 @@
+package Raft
+//package main
+
+import (
+	"cluster"
+	"fmt"
+	//"io/ioutil"
+	"math/rand"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+	"reflect"
+	"encoding/gob"
+	"log"
+)
+
+type RaftNode struct {
+	Isflr     bool //follower
+	Isldr     bool //leader
+	Iscnd     bool //candidate
+	NodePid   int  //PID of that node
+	CurTerm   int  //Term of that particular node
+	VotedTerm int  //voted at what term
+	MaxTime   int  //election timeout to avoid split voting
+	ElecTO    int  //convert from follower to candidate if no msg arrived from leader
+	LdrId     int  //PID of leader
+	TotNodes  int  //total number of nodes for majority in election
+	Votes     int  //total votes recieved
+	TO_FLAG   int  //whether election should happen
+	inbox 	  chan *LogItem
+	outbox    chan interface{}
+
+	raftserver *cluster.RaftServer
+}
+
+type Raft interface {
+   Term()  int64
+   Leader()    int
+   Outbox() chan<- interface{}   //here the msg will be forwarded to the followers if its a Leader
+   Inbox() <-chan *LogItem	// here will get msg to be replicated
+}
+
+func (node RaftNode) Leader() int {
+	return node.LdrId
+}
+
+func (node RaftNode) Term() int {
+	return node.CurTerm
+}
+
+func (node RaftNode) isLeader() bool {
+	return node.Isldr
+}
+
+
+func (node RaftNode) Outbox() chan interface{} {
+	return (&node).outbox
+}
+
+func (node RaftNode) Inbox() chan *LogItem {
+	return (&node).inbox
+}
+
+func getTerm(myPid int) int {
+	bytes := make([]byte, 20)
+	filename := "file" + strconv.Itoa(myPid) + ".txt"
+	file, err := os.Open(filename)
+	if err != nil {
+		fmt.Println("error getting term")
+	}
+	defer file.Close()
+	file.Read(bytes)
+	curterm := strings.Split(string(bytes), "\n")
+	value := curterm[0]
+	Term, _ := strconv.Atoi(value)
+	return Term
+}
+
+func setTerm(raftnode *RaftNode, term int) {
+	raftnode.CurTerm = term
+	/*
+		Term := []byte(string(strconv.Itoa(term) + "\n"))
+		filename := "file" + strconv.Itoa(raftnode.NodePid) + ".txt"
+		err := ioutil.WriteFile(filename, Term, 0666)
+		fmt.Println("open file ",filename)
+		if err != nil {
+			fmt.Println("error in file write ",err)
+		}
+	*/
+}
+
+func New(myPid int, ConFile string) *RaftNode {
+	raftnode := perNode(myPid, ConFile)
+	// register for gob types
+	gob.Register(LogEntry{})
+	gob.Register(LogReply{})
+	gob.Register(LogItem{})						//???????????????????????
+	gob.Register(cluster.Envelope{})
+	go HBeatTO(raftnode)
+	go GetMsg(raftnode) //GetMsg(raftnode)
+	go LogReplicator(raftnode)
+	return raftnode
+}
+
+func perNode(myPid int, ConFile string) *RaftNode {
+	raftnode := new(RaftNode)
+	raftnode.Isflr = true
+	raftnode.Isldr = false
+	raftnode.Iscnd = false
+	raftnode.NodePid = myPid
+	setTerm(raftnode, 1) //raftnode.CurTerm
+	raftnode.VotedTerm = -1
+	raftnode.MaxTime = 2000 //milli seconds
+	raftnode.ElecTO = 4   //seconds
+	raftnode.LdrId = 0   
+	raftnode.raftserver = clusterStart(myPid, ConFile, raftnode)
+	raftnode.TotNodes = len(raftnode.raftserver.Peers())
+	raftnode.Votes = 0
+	raftnode.outbox = make(chan interface{}, 1000)
+	raftnode.inbox = make(chan *LogItem, 1000)
+	return raftnode
+}
+
+func clusterStart(myPid int, ConFile string, raftnode *RaftNode) *cluster.RaftServer {
+	var srvr *cluster.RaftServer
+	srvr = cluster.New(myPid, "config.txt")
+	return srvr
+}
+
+func HBeatTO(raftnode *RaftNode) {
+	for {
+		raftnode.TO_FLAG = 1
+		time.Sleep(time.Duration(raftnode.ElecTO) * time.Second)
+		if raftnode.Isldr == true {
+			raftnode.TO_FLAG = 0
+		}
+		if raftnode.Iscnd == true {
+			raftnode.TO_FLAG = 0
+		}
+		if raftnode.TO_FLAG == 1 {
+			if raftnode.Isldr != true {
+				raftnode.Iscnd = true
+				raftnode.Isflr = false
+			//	fmt.Println("Elections initiated by NodeID:", raftnode.NodePid)
+				StartElection(raftnode)
+
+			}
+		}
+	}
+}
+
+func GetMsg(raftnode *RaftNode) {
+	for {
+		scase := ""
+		msg := ""
+		select {
+		case envelope := <-raftnode.raftserver.Inbox():
+			Type := reflect.TypeOf(envelope.Msg)
+			if "string" == Type.String() {  
+			msg = envelope.Msg.(string)
+			msg1 := strings.Split(msg, " ")
+			scase = msg1[0]
+			} else {
+				go logEntryHandler(envelope,raftnode)
+				}
+
+
+		case <-time.After(2 * time.Second):
+			//fmt.Print("timeout @ GetMsg\n",raftnode.NodePid)   //For leader this may be the case that no one sends any msg to him
+		}
+
+		if len(scase) != 0 {
+			switch scase {
+			case "Candidate_ID:":
+				{
+					msg1 := strings.Split(msg, " ")
+					Term, _ := strconv.Atoi(msg1[3])
+					raftnode.LdrId=0
+					if raftnode.Isldr == false {
+						if raftnode.Iscnd == true {
+						if Term > raftnode.CurTerm {
+							raftnode.CurTerm = Term
+							raftnode.Iscnd = false
+							raftnode.Isflr = true	
+						}				
+						}
+						if raftnode.Isflr == true {
+					//        println(msg)					
+						go VoteReply(msg, raftnode)
+					} 
+					}
+					
+				}
+			case "Leader_ID:":
+				{
+					raftnode.TO_FLAG = 0
+					msg1 := strings.Split(msg, " ")
+					Term, _ := strconv.Atoi(msg1[3])
+					LdrID, _ := strconv.Atoi(msg1[1])
+				//	println("hb msg ", msg1[1])
+					if raftnode.CurTerm <= Term {
+						raftnode.Isflr = true
+						raftnode.Iscnd = false
+						raftnode.Isldr = false
+						raftnode.LdrId = LdrID
+						raftnode.CurTerm = Term
+					}
+				}
+
+			case "Follower_ID:":
+				{
+					if raftnode.Iscnd == true {
+				//		println(msg)
+						msg1 := strings.Split(msg, " ")
+						//Term,_ := strconv.Atoi(msg1[3])
+						if msg1[4] == "Voted:" {
+							raftnode.Votes++
+						//	fmt.Println("Votes :", raftnode.Votes)
+							if raftnode.Votes >= (int(raftnode.TotNodes/2)+1) { //Majority votes for him
+								raftnode.Iscnd = false
+								raftnode.Isldr = true
+								raftnode.Isflr = false
+								raftnode.LdrId = raftnode.NodePid
+								print("Leader Elected ", raftnode.LdrId, "\n")
+								go SendHBeat(raftnode.CurTerm, raftnode.LdrId, raftnode)
+							}
+						}
+
+						if msg1[4] == "NotVoted:" {
+							raftnode.Isflr = true
+							raftnode.Iscnd = false
+							raftnode.Isldr = false
+							raftnode.TO_FLAG = 0
+						}
+					}
+				}
+			default:
+				{
+					println("Invalid Msg\n", msg)
+				}
+			}
+		}
+	}
+}
+
+func StartElection(raftnode *RaftNode) {
+	rand.Seed(time.Now().UnixNano())
+	period := time.Duration(rand.Int63n(int64(raftnode.MaxTime))) //wait random amount of time before election
+//	fmt.Println("random time ", period)
+	time.Sleep(period * time.Millisecond)
+	raftnode.LdrId=0
+
+	if raftnode.Isldr == false {
+		if raftnode.Iscnd == true {
+			Term := raftnode.CurTerm + 1
+			raftnode.VotedTerm = Term
+			raftnode.Votes = 1
+			setTerm(raftnode, Term)
+		//	fmt.Println("Current term ",raftnode.CurTerm)
+			go RequestVote(raftnode.CurTerm, raftnode.raftserver.Pids(), raftnode)
+		}
+	}
+}
+
+func RequestVote(Candterm int, candid int, raftnode *RaftNode) {
+//	fmt.Println("give me votes\n")
+	raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: -1, MsgId: 0, Msg: "Candidate_ID: " + strconv.Itoa(candid) + " Term: " + strconv.Itoa(Candterm) + " "}
+}
+
+func VoteReply(msg string, raftnode *RaftNode) {
+	msg1 := strings.Split(msg, " ")
+	CandID, _ := strconv.Atoi(msg1[1])
+	Term, _ := strconv.Atoi(msg1[3])
+	if raftnode.Isflr == true {
+		if raftnode.VotedTerm >= Term {
+			raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: CandID, MsgId: 0, Msg: "Follower_ID: " + strconv.Itoa(raftnode.NodePid) + " Term: " + strconv.Itoa(raftnode.CurTerm) + " NotVoted: " + " 1 "}
+		} else {
+			raftnode.VotedTerm = Term
+			raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: CandID, MsgId: 0, Msg: "Follower_ID: " + strconv.Itoa(raftnode.NodePid) + " Term: " + strconv.Itoa(raftnode.CurTerm) + " Voted: " + " 1 "}
+		}
+	}
+
+if Term > raftnode.CurTerm {
+	setTerm(raftnode,Term)
+}
+}
+
+func SendHBeat(term int, leaderid int, raftnode *RaftNode) {
+	for {
+		if raftnode.Isldr == true {
+			if raftnode.NodePid == leaderid {
+			//	fmt.Printf("Leader %d Sending HBM.....\n", leaderid)
+				time.Sleep(1 * time.Second)
+				raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: -1, MsgId: 0, Msg: "Leader_ID: " + strconv.Itoa(leaderid) + " Term: " + strconv.Itoa(term) + " "}
+			}
+		} else {
+			return
+		}
+	}
+}
+
+func (node RaftNode) Exit() {
+	os.Exit(0)
+}
+
+//////////////////////////////////////////////*Log Replication*///////////////////////////////////////////
+
+type LogEntry struct {
+    CommitIndex	      int64
+    Term              int
+    LeaderId          int
+    PrevLogindex      int64
+    PrevLogTerm       int
+    LogCommand        LogItem
+}
+
+type LogItem struct {
+    Index  int64
+    Term   int
+    Data    interface{}    // The data that was supplied to raft's inbox
+}
+
+type LogReply struct {
+	Index		int64
+	Reply		bool
+	Data		interface{}
+}
+
+type Ack struct {
+	positive	int
+	negative	int
+}
+
+var logentry LogEntry
+var item LogItem
+var Log []LogItem
+var BlockNext [10]bool			//by default initialized to false and false means don't block 
+var CurrentIndex int
+var ACK map[int64]Ack
+var Majority = 6			// Depends on # of nodes in the cluster Majority=(Max/2+1)
+
+func LogReplicator(raftnode *RaftNode) {
+	ACK = make(map[int64]Ack)
+	go GetLog(raftnode)
+	go SendLog(raftnode)
+}
+
+func GetLog(item LogItem,raftnode *RaftNode,){	//Msg to KVSTORE & somthing will come on cluster layer socket pass it to KVSTORE
+	raftnode.Inbox() <- &item	
+}
+
+func SendLog(raftnode *RaftNode){	//Msg from KVSTORE & this function will replicate each value on the followers using last commited index
+	for {
+	for msg := range raftnode.outbox {
+		if msg != nil {	
+		logObject:=PrepareLogEntry(msg,raftnode)
+		Log=append(Log,logObject.LogCommand)
+		CurrentIndex += 1
+	//	use sendMsg() function for each node separately 
+			for i:=0;i<10;i++ {
+				go send(raftnode,i,logObject)
+			}
+		}
+	}
+}
+}
+
+func send(raftnode *RaftNode,i int,logObject LogEntry) {	
+		if BlockNext[i] == false && (i+1) != raftnode.NodePid {
+				BlockNext[i] = true
+				raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid: i+1, MsgId: 0, Msg: logObject}
+		}
+}
+
+func PrepareLogEntry(msg interface{},raftnode *RaftNode) LogEntry {
+	logentry.CommitIndex = 0	      
+	logentry.Term = raftnode.CurTerm             
+	logentry.LeaderId = raftnode.LdrId  
+	if CurrentIndex == 0 {       
+		logentry.PrevLogindex = 0      			
+		logentry.PrevLogTerm = logentry.Term  			
+	} else {
+		logentry.PrevLogindex = Log[CurrentIndex-1].Index    			
+		logentry.PrevLogTerm = Log[CurrentIndex-1].Term			
+	}
+	item.Index += 1 
+	item.Term = logentry.Term
+	item.Data = msg    
+	logentry.LogCommand = item        
+	return logentry
+}
+
+//	Handles two types of msgs, logEntry and logReply
+//	if every thing goes fine then send ACK
+func logEntryHandler(envelope *cluster.Envelope,raftnode *RaftNode){
+	Type := reflect.TypeOf(envelope.Msg)	   
+//Message is of LogEntry Type	
+	if Type == reflect.TypeOf(logentry) {
+		logety:=envelope.Msg.(LogEntry)
+		x:=logety.LogCommand
+		if (CurrentIndex != 0)&&(logety.PrevLogindex == Log[CurrentIndex-1].Index)&&(logety.PrevLogTerm == Log[CurrentIndex-1].Term){ 
+			Log=append(Log,logety.LogCommand)
+			CurrentIndex += 1				
+			SendAck(x,raftnode,true)		
+		} else {
+			SendAck(x,raftnode,false)
+		}	
+	}
+
+//Message is of LogAck Type
+	if Type == reflect.TypeOf(logack) {	
+			logreply:=envelope.Msg.(LogReply)
+			if logreply.Reply == true {			
+					response:=ACK[logreply.Index]
+					response.positive = response.positive+1
+					ACK[logreply.Index] = response
+				if response.positive == Majority {
+						//Majority has replicated the log Send Success to KVSTORE
+						var item LogItem
+						item.Index = logreply.Data.Index
+						item.Term = logreply.Data.Term
+						item.Data = logreply.Data.Data
+						GetLog(item,raftnode)				
+				} else {
+					response:=ACK[logreply.Index]
+					response.negative = response.negative+1
+					ACK[logreply.Index] = response
+					if response.negative == Majority {
+						//Majority has not replicated the log Send Failure to KVSTORE
+
+						
+								}
+					}
+				}
+			BlockNext[(envelope.Pid-1)] = false	
+		}
+}	
+	
+var logack LogReply
+func SendAck(x LogItem,raftnode *RaftNode,reply bool){
+	logack.Index = x.Index
+	logack.Reply = reply
+	logack.Data  = x
+//	fmt.Print(logack)
+	if (raftnode.LdrId >= 1) && (raftnode.LdrId <= 10) {
+		raftnode.raftserver.Outbox() <- &cluster.Envelope{Pid:raftnode.LdrId, MsgId: 0, Msg: logack}
+	}
+}
