@@ -1,6 +1,6 @@
 Web Page for the Project
 =
-http://ankitbhrdwj27.github.io/LogReplication
+http://ankitbhrdwj.github.io/LogReplication
 
 How to Run
 =
